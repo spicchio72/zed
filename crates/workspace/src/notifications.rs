@@ -1,5 +1,6 @@
 use crate::{SuppressNotification, Toast, Workspace};
 use anyhow::Context as _;
+use client::ErrorExt;
 use gpui::{
     AnyView, App, AppContext as _, AsyncWindowContext, ClickEvent, ClipboardItem, Context,
     DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, PromptLevel, Render, ScrollHandle,
@@ -947,18 +948,67 @@ where
     }
 }
 
-pub trait NotifyTaskExt {
+pub trait NotifyTaskExt<E> {
     fn detach_and_notify_err(self, window: &mut Window, cx: &mut App);
+
+    /// Polls task to completion.
+    /// On error, shows a notification with `details`; on success, hides previous notifications with the same id.
+    fn detach_and_notify_err_with_details(
+        self,
+        id: NotificationId,
+        window: &Window,
+        cx: &App,
+        details: impl FnOnce(&E, &mut Window, &mut App) -> String + 'static,
+    );
 }
 
-impl<R, E> NotifyTaskExt for Task<std::result::Result<R, E>>
+impl<R, E> NotifyTaskExt<E> for Task<std::result::Result<R, E>>
 where
-    E: std::fmt::Debug + std::fmt::Display + Sized + 'static,
+    E: std::fmt::Debug + std::fmt::Display + Sized + ErrorExt + 'static,
     R: 'static,
 {
     fn detach_and_notify_err(self, window: &mut Window, cx: &mut App) {
         window
             .spawn(cx, async move |mut cx| self.await.notify_async_err(&mut cx))
+            .detach();
+    }
+
+    fn detach_and_notify_err_with_details(
+        self,
+        id: NotificationId,
+        window: &Window,
+        cx: &App,
+        details: impl FnOnce(&E, &mut Window, &mut App) -> String + 'static,
+    ) {
+        window
+            .spawn(cx, async move |cx| match self.await {
+                Ok(value) => {
+                    cx.update_root(|view, _, cx| {
+                        if let Ok(workspace) = view.downcast::<Workspace>() {
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.dismiss_notification(&id, cx);
+                            })
+                        }
+                    })
+                    .ok();
+                    Some(value)
+                }
+                Err(err) => {
+                    cx.update_root(|view, window, cx| {
+                        let details = details(&err, window, cx);
+                        log::error!("{details}");
+                        if let Ok(workspace) = view.downcast::<Workspace>() {
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.show_notification(id, cx, |cx| {
+                                    cx.new(|cx| ErrorMessagePrompt::new(details, cx))
+                                });
+                            })
+                        }
+                    })
+                    .ok();
+                    None
+                }
+            })
             .detach();
     }
 }

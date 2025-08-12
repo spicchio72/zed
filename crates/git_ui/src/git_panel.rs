@@ -68,6 +68,7 @@ use ui::{
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::SERIALIZATION_THROTTLE_TIME;
+use workspace::notifications::NotifyTaskExt as _;
 
 use cloud_llm_client::CompletionIntent;
 use workspace::{
@@ -958,6 +959,8 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        struct GitPanelOpenNotification;
+
         maybe!({
             let entry = self.entries.get(self.selected_entry?)?.status_entry()?;
             let active_repo = self.active_repository.as_ref()?;
@@ -971,10 +974,13 @@ impl GitPanel {
             self.workspace
                 .update(cx, |workspace, cx| {
                     workspace
-                        .open_path_preview(path, None, false, false, true, window, cx)
-                        .detach_and_prompt_err("Failed to open file", window, cx, |e, _, _| {
-                            Some(format!("{e}"))
-                        });
+                        .open_path_preview(path.clone(), None, false, false, true, window, cx)
+                        .detach_and_notify_err_with_details(
+                            NotificationId::unique::<GitPanelOpenNotification>(),
+                            window,
+                            cx,
+                            move |e, _, _| format!("Failed to open file {:?}: {e}", path.path),
+                        );
                 })
                 .ok()
         });

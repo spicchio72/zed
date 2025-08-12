@@ -66,7 +66,7 @@ use workspace::{
     DraggedSelection, OpenInTerminal, OpenOptions, OpenVisible, PreviewTabsSettings, SelectedEntry,
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    notifications::{DetachAndPromptErr, NotifyTaskExt},
+    notifications::{NotificationId, NotifyTaskExt},
 };
 use worktree::CreatedEntry;
 use zed_actions::OpenRecent;
@@ -646,6 +646,8 @@ impl ProjectPanel {
         });
 
         cx.subscribe_in(&project_panel, window, {
+            struct ProjectPanelOpenNotification;
+
             let project_panel = project_panel.downgrade();
             move |workspace, _, event, window, cx| match event {
                 &Event::OpenedEntry {
@@ -672,23 +674,29 @@ impl ProjectPanel {
                                     true,
                                     window, cx,
                                 )
-                                .detach_and_prompt_err("Failed to open file", window, cx, move |e, _, _| {
-                                    match e.error_code() {
-                                        ErrorCode::Disconnected => if is_via_ssh {
-                                            Some("Disconnected from SSH host".to_string())
-                                        } else {
-                                            Some("Disconnected from remote project".to_string())
-                                        },
-                                        ErrorCode::UnsharedItem => Some(format!(
-                                            "{} is not shared by the host. This could be because it has been marked as `private`",
-                                            file_path.display()
-                                        )),
-                                        // See note in worktree.rs where this error originates. Returning Some in this case prevents
-                                        // the error popup from saying "Try Again", which is a red herring in this case
-                                        ErrorCode::Internal if e.to_string().contains("File is too large to load") => Some(e.to_string()),
-                                        _ => None,
+                                .detach_and_notify_err_with_details(
+                                    NotificationId::unique::<ProjectPanelOpenNotification>(),
+                                    window,
+                                    cx,
+                                    move |e, _, _| {
+                                        let details = match e.error_code() {
+                                            ErrorCode::Disconnected => if is_via_ssh {
+                                                Some("Disconnected from SSH host".to_string())
+                                            } else {
+                                                Some("Disconnected from remote project".to_string())
+                                            },
+                                            ErrorCode::UnsharedItem => Some(format!(
+                                                "{} is not shared by the host. This could be because it has been marked as `private`",
+                                                file_path.display()
+                                            )),
+                                            // See note in worktree.rs where this error originates. Returning Some in this case prevents
+                                            // the error popup from saying "Try Again", which is a red herring in this case
+                                            ErrorCode::Internal if e.to_string().contains("File is too large to load") => Some(e.to_string()),
+                                            _ => None,
+                                        };
+                                        details.map(|details| format!("Failed to open file {file_path:?}: {details}")).unwrap_or_else(|| format!("Failed to open file {file_path:?}: {e}"))
                                     }
-                                });
+                                );
 
                             if let Some(project_panel) = project_panel.upgrade() {
                                 // Always select and mark the entry, regardless of whether it is opened or not.
