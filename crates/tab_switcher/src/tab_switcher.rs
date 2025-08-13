@@ -474,8 +474,31 @@ impl PickerDelegate for TabSwitcherDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
         self.selected_index = ix;
+
+        if !self.matches.is_empty() {
+            self.workspace
+                .update(cx, |this, cx| {
+                    if let Some(tab) = self.matches.get(ix)
+                        && let Some(path) = tab.item.project_path(cx)
+                    // && let Some(pane) = this.last_active_center_pane
+                    {
+                        dbg!(&path);
+                        this.open_path_preview(
+                            path, None, /*Some(pane)*/
+                            true, true, true, window, cx,
+                        )
+                        .detach_and_log_err(cx);
+                    }
+                })
+                .ok();
+        }
         cx.notify();
     }
 
