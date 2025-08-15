@@ -538,6 +538,8 @@ entity_messages!(
     LinkedEditingRange,
     LoadCommitDiff,
     MultiLspQuery,
+    LspQuery,
+    LspQueryResponse,
     RestartLanguageServers,
     StopLanguageServers,
     OnTypeFormatting,
