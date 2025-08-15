@@ -1018,7 +1018,6 @@ const BINARY_DIR: &str = if cfg!(target_os = "windows") {
     "bin"
 };
 
-// TODO lw: this depends on the shell?
 const ACTIVATE_PATH: &str = if cfg!(target_os = "windows") {
     "Scripts/activate.bat"
 } else {

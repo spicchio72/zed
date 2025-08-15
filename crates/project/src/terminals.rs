@@ -123,9 +123,30 @@ impl Project {
         cx.spawn(async move |project, cx| {
             let python_venv_directory = if let Some(path) = path {
                 match project.upgrade() {
-                    Some(project) => Self::python_venv_directory(project, path, venv.clone(), cx)
-                        .await?
-                        .zip(Some(venv)),
+                    Some(project) => {
+                        let venv_dir =
+                            Self::python_venv_directory(project.clone(), path, venv.clone(), cx)
+                                .await?;
+                        match venv_dir {
+                            Some(venv_dir)
+                                if project
+                                    .update(cx, |project, cx| {
+                                        project.resolve_abs_path(
+                                            &venv_dir
+                                                .join(BINARY_DIR)
+                                                .join("activate")
+                                                .to_string_lossy(),
+                                            cx,
+                                        )
+                                    })?
+                                    .await
+                                    .is_some_and(|m| m.is_file()) =>
+                            {
+                                Some((venv_dir, venv))
+                            }
+                            _ => None,
+                        }
+                    }
                     None => None,
                 }
             } else {
@@ -144,13 +165,13 @@ impl Project {
                         == terminal_settings::ActivateScript::Default
                     {
                         match shell {
-                            Shell::Program(program) => Self::activate_script_kind(Some(program)),
+                            Shell::Program(program) => ActivateScript::by_shell(Some(program)),
                             Shell::WithArguments {
                                 program,
                                 args: _,
                                 title_override: _,
-                            } => Self::activate_script_kind(Some(program)),
-                            Shell::System => Self::activate_script_kind(None),
+                            } => ActivateScript::by_shell(Some(program)),
+                            Shell::System => ActivateScript::by_shell(None),
                         }
                     } else {
                         venv_settings.activate_script
@@ -173,7 +194,7 @@ impl Project {
                         _ => "source",
                     };
 
-                    let line_ending = if cfg!(windows) { '\r' } else { 'n' };
+                    let line_ending = if cfg!(windows) { '\r' } else { '\n' };
 
                     if venv_settings.venv_name.is_empty() {
                         let path = python_venv_directory
@@ -182,10 +203,7 @@ impl Project {
                             .to_string_lossy()
                             .to_string();
                         let quoted = shlex::try_quote(&path).ok()?;
-                        Some(format!(
-                            "{} {} ; clear{}",
-                            activate_keyword, quoted, line_ending
-                        ))
+                        Some(format!("{activate_keyword} {quoted} ; clear{line_ending}",))
                     } else {
                         Some(format!(
                             "{activate_keyword} {activate_script_name} {name}; clear{line_ending}",
@@ -532,23 +550,22 @@ impl Project {
         }
 
         let r = this.update(cx, move |_, cx| {
-            let fs = worktree.read(cx).as_local()?.fs().clone();
             let map: Vec<_> = venv_settings
                 .directories
                 .iter()
                 .map(|name| abs_path.join(name))
                 .collect();
-            Some(cx.spawn(async move |_, _| {
+            Some(cx.spawn(async move |project, cx| {
                 for venv_path in map {
                     let bin_path = venv_path.join(BINARY_DIR);
-                    // One-time synchronous check is acceptable for terminal/task initialization
-                    // we are within a spawned future anyways
-                    let exists = fs
-                        .metadata(&bin_path)
+                    let exists = project
+                        .upgrade()?
+                        .update(cx, |project, cx| {
+                            project.resolve_abs_path(&bin_path.to_string_lossy(), cx)
+                        })
+                        .ok()?
                         .await
-                        .ok()
-                        .flatten()
-                        .map_or(false, |meta| meta.is_dir);
+                        .map_or(false, |meta| meta.is_dir());
                     if exists {
                         return Some(venv_path);
                     }
@@ -560,22 +577,6 @@ impl Project {
             Some(task) => task.await,
             None => None,
         })
-    }
-
-    fn activate_script_kind(shell: Option<&str>) -> ActivateScript {
-        let shell_env = std::env::var("SHELL").ok();
-        let shell_path = shell.or_else(|| shell_env.as_deref());
-        let shell = std::path::Path::new(shell_path.unwrap_or(""))
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("");
-        match shell {
-            "fish" => ActivateScript::Fish,
-            "tcsh" => ActivateScript::Csh,
-            "nu" => ActivateScript::Nushell,
-            "powershell" | "pwsh" => ActivateScript::PowerShell,
-            _ => ActivateScript::Default,
-        }
     }
 
     pub fn local_terminal_handles(&self) -> &Vec<WeakEntity<terminal::Terminal>> {

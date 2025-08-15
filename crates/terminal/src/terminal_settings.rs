@@ -135,6 +135,24 @@ pub enum ActivateScript {
     Pyenv,
 }
 
+impl ActivateScript {
+    pub fn by_shell(shell: Option<&str>) -> Self {
+        let shell_env = std::env::var("SHELL").ok();
+        let shell_path = shell.or_else(|| shell_env.as_deref());
+        let shell = std::path::Path::new(shell_path.unwrap_or(""))
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        match shell {
+            "fish" => ActivateScript::Fish,
+            "tcsh" => ActivateScript::Csh,
+            "nu" => ActivateScript::Nushell,
+            "powershell" | "pwsh" => ActivateScript::PowerShell,
+            _ => ActivateScript::Default,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalSettingsContent {
     /// What shell to use when opening a terminal.
