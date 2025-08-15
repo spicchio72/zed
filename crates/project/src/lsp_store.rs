@@ -8167,7 +8167,7 @@ impl LspStore {
                     cx.clone(),
                 )
                 .await?;
-                let request_id = LspRequestId(lsp_query.lsp_request_id);
+                let lsp_request_id = LspRequestId(lsp_query.lsp_request_id);
 
                 lsp_store.update(&mut cx, |lsp_store, cx| {
                     let references_task = lsp_store.request_multiple_lsp_locally(
@@ -8177,7 +8177,7 @@ impl LspStore {
                         cx,
                     );
                     lsp_store.running_lsp_requests.insert(
-                        request_id,
+                        lsp_request_id,
                         cx.spawn(async move |lsp_store, cx| {
                             let references = references_task.await;
                             let send_response_task = lsp_store
@@ -8201,7 +8201,9 @@ impl LspStore {
                                             })
                                             .collect::<HashMap<_, _>>();
                                         Some(client.send_lsp_response::<proto::GetReferences>(
-                                            project_id, request_id, response,
+                                            project_id,
+                                            lsp_request_id,
+                                            response,
                                         ))
                                     } else {
                                         None
@@ -8211,7 +8213,7 @@ impl LspStore {
                                 .flatten();
 
                             if let Some(send_response_task) = send_response_task {
-                                match send_response_task.await {
+                                match dbg!(send_response_task.await) {
                                     Ok(proto::Ack {}) => {}
                                     Err(e) => log::error!("Failed to send LSP response: {e:#}"),
                                 }
@@ -8225,7 +8227,6 @@ impl LspStore {
         }
     }
 
-    // TODO kb wrong, better be in the client.rs
     async fn handle_lsp_query_response(
         lsp_store: Entity<Self>,
         // TODO kb there's no way to return an Option<LspResp> with such `proto::LspQueryResponse`
@@ -8233,9 +8234,16 @@ impl LspStore {
         envelope: TypedEnvelope<proto::LspQueryResponse>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        lsp_store.update(&mut cx, |lsp_store, cx| {
+        dbg!("????????????????");
+        lsp_store.read_with(&mut cx, |lsp_store, _| {
+            dbg!((
+                "1",
+                lsp_store.upstream_client().is_some(),
+                lsp_store.downstream_client.is_some()
+            ));
             if let Some((upstream_client, _)) = lsp_store.upstream_client() {
-                upstream_client.handle_lsp_response(envelope);
+                dbg!("2");
+                upstream_client.handle_lsp_response(envelope.clone());
             }
         })?;
         Ok(proto::Ack {})
